@@ -1,5 +1,3 @@
-version: "3.8"
-
 # sql-publisher  = stand-in for Azure SQL Managed Instance (Publisher + Distributor)
 # sql-subscriber = stand-in for AWS RDS SQL Server (push Subscriber ONLY)
 #
