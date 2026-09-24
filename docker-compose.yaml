@@ -1,0 +1,51 @@
+version: "3.8"
+
+# sql-publisher  = stand-in for Azure SQL Managed Instance (Publisher + Distributor)
+# sql-subscriber = stand-in for AWS RDS SQL Server (push Subscriber ONLY)
+#
+# Deliberately never run sp_adddistributor / sp_addpublisher against sql-subscriber
+# in the scripts below — that mirrors the real constraint that RDS can only be
+# a push subscriber, never a Publisher or Distributor.
+
+services:
+  sql-publisher:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sql-publisher
+    hostname: sql-publisher          # sets @@SERVERNAME cleanly, avoiding the RDS-style mismatch on purpose
+    user: root                       # only so the startup command below can mkdir/chown, then it drops to mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "P@ssw0rd_Pub1"
+      MSSQL_PID: "Developer"
+      MSSQL_AGENT_ENABLED: "true"    # replication agents run as SQL Agent jobs — this must be on
+    # Creates the distributor's working directory (the thing that errored last time)
+    # before SQL Server starts, then hands off to the non-root mssql user to run sqlservr —
+    # same security posture as the stock image, just with the folder problem pre-solved.
+    command: >
+      bash -c "
+      mkdir -p /var/opt/mssql/ReplData &&
+      chown -R mssql:mssql /var/opt/mssql/ReplData &&
+      exec su mssql -c '/opt/mssql/bin/sqlservr'
+      "
+    ports:
+      - "14330:1433"
+    networks:
+      - repl-net
+
+  sql-subscriber:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sql-subscriber
+    hostname: sql-subscriber
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "P@ssw0rd_Sub1"
+      MSSQL_PID: "Developer"
+      MSSQL_AGENT_ENABLED: "true"
+    ports:
+      - "14331:1433"
+    networks:
+      - repl-net
+
+networks:
+  repl-net:
+    driver: bridge
