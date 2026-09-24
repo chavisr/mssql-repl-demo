@@ -56,7 +56,7 @@ sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 04_validate_on_publishe
 
 This script checks the subscription, posts a tracer token, attempts to read latency information, and inserts Chloe as customer `3`.
 
-The tracer check currently calls `sp_helptracertokenhistory` without passing the token ID captured earlier. It also queries immediately despite its comment suggesting a 10–30 second wait. If that check reports an error or incomplete latency data, inspect it separately; it is not proof that row replication failed. The commands here preserve the workflow in [step.md](step.md).
+The tracer check currently calls `sp_helptracertokenhistory` without passing the token ID captured earlier. It also queries immediately despite its comment suggesting a 10–30 second wait. If that check reports an error or incomplete latency data, inspect it separately; it is not proof that row replication failed.
 
 After a few seconds, query the subscriber:
 
