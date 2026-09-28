@@ -17,8 +17,8 @@ services:
       chown -R mssql:mssql /var/opt/mssql/ReplData &&
       exec su mssql -c '/opt/mssql/bin/sqlservr'
       "
-    ports:
-      - "14330:1433"
+    # SQL Server listens directly on VM 1 TCP 1433.
+    network_mode: host
     # Keep the SQL replication identity while routing to the other VM.
     extra_hosts:
       sql-subscriber: "${SUBSCRIBER_VM_IP:?Set SUBSCRIBER_VM_IP to the reachable subscriber VM IP address}"

@@ -9,5 +9,5 @@ services:
       MSSQL_SA_PASSWORD: "P@ssw0rd_Sub1"
       MSSQL_PID: "Developer"
       MSSQL_AGENT_ENABLED: "true"
-    ports:
-      - "1433:1433"
+    # SQL Server listens directly on VM 2 TCP 1433.
+    network_mode: host

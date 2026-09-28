@@ -128,12 +128,14 @@ This scenario runs the same push replication lab across two reachable Linux VMs.
 
 | VM | Compose file | Role | Host SQL port |
 | --- | --- | --- | --- |
-| VM 1 | `docker-compose.publisher.yaml` | Publisher + distributor | `14330` |
+| VM 1 | `docker-compose.publisher.yaml` | Publisher + distributor | `1433` |
 | VM 2 | `docker-compose.subscriber.yaml` | Push subscriber | `1433` |
 
-Each Compose file runs independently with its own local Docker network. The publisher resolves `sql-subscriber` to the subscriber VM's reachable IP using `extra_hosts`; the existing SQL scripts retain the subscriber identity `sql-subscriber`. Snapshot files stay on the publisher, where the push agents run. No shared filesystem or cross-host Docker network is needed.
+Both Compose files use `network_mode: host` on Linux: SQL Server shares its VM’s network stack and listens directly on TCP `1433`. Port mappings are omitted because [Docker host networking](https://docs.docker.com/engine/network/drivers/host/) does not use them. TCP `1433` must be free on each VM. The publisher resolves `sql-subscriber` to the subscriber VM's reachable IP using `extra_hosts`; the existing SQL scripts retain the subscriber identity `sql-subscriber`. Snapshot files stay on the publisher, where the push agents run. No shared filesystem or cross-host Docker network is needed.
 
-Use fresh containers for this scenario. Run only the appropriate Compose file on each VM; the original demo uses the same container names. These files retain the embedded lab passwords and disposable storage. Restrict subscriber TCP `1433` in the cloud and host firewall to the publisher VM's source address (as seen by the subscriber). Run administrative commands locally on each VM; they do not require opening publisher port `14330` across clouds.
+Use fresh containers for this scenario. Run only the appropriate Compose file on each VM; the original demo uses the same container names. These files retain the embedded lab passwords and disposable storage. With host networking, SQL Server listens on the VM network interfaces; restrict access with the host and cloud firewalls. Restrict subscriber TCP `1433` in the cloud and host firewall to the publisher VM's source address (as seen by the subscriber). Run administrative commands locally on each VM; they do not require allowing inbound publisher TCP `1433` across clouds.
+
+If you already ran the bridge-network version, changing network mode recreates the containers and discards this lab’s unpersisted data. For a disposable lab, reset both VMs using step 5, pull this branch on both VMs, and repeat setup. Back up first if you need the existing data.
 
 ### 1. Start each VM's service
 
@@ -165,14 +167,16 @@ docker compose -f docker-compose.publisher.yaml exec sql-publisher \
   -Q 'SELECT @@SERVERNAME AS SubscriberServerName;'
 ```
 
-Expect `sql-subscriber`. If the connection fails, check the configured VM IP, subscriber readiness, published port, and firewall rules before configuring replication. Host-to-host reachability alone does not verify the container's connection. If the returned server name differs, correct the subscriber deployment before proceeding.
+Expect `sql-subscriber`. If the connection fails, check the configured VM IP, subscriber readiness, TCP `1433` availability, and firewall rules before configuring replication. Host-to-host reachability alone does not verify the container's connection. If the returned server name differs, correct the subscriber deployment before proceeding.
 
 ### 3. Configure replication in order
+
+Use the commands below with port `1433` on both VMs; SQL file comments still show the original single-host demo ports.
 
 First, on **VM 1**:
 
 ```sh
-sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -b -i 01_setup_publisher_distributor.sql
+sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -b -i 01_setup_publisher_distributor.sql
 ```
 
 Then, on **VM 2** (use port `1433`, overriding the local-demo port shown in SQL file comments):
@@ -184,7 +188,7 @@ sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 02_setup_subscriber_d
 Finally, on **VM 1**:
 
 ```sh
-sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -b -i 03_create_subscription.sql
+sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -b -i 03_create_subscription.sql
 ```
 
 Allow a minute or two for initialization. On **VM 2**, verify customers `1` and `2` arrive:
@@ -200,7 +204,7 @@ Customer `3` is added in the next step. If the table or initial rows have not ar
 On **VM 1**, run the live-change script once:
 
 ```sh
-sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 04_validate_on_publisher.sql
+sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 04_validate_on_publisher.sql
 ```
 
 The existing tracer-token limitation described in [Check live replication](#3-check-live-replication) still applies; leave `-b` off this command so later batches can insert Chloe. After a few seconds, on **VM 2**:
@@ -212,7 +216,7 @@ sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 05_check_subscriber.s
 Expect customers `1`, `2`, and `3`. Next, on **VM 1**:
 
 ```sh
-sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 06_test_edge_cases_on_publisher.sql
+sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 06_test_edge_cases_on_publisher.sql
 ```
 
 The truncation error is expected; leave `-b` off so the remaining batches run. After a few seconds, on **VM 2**:
