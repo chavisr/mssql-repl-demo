@@ -135,6 +135,8 @@ Both Compose files use `network_mode: host` on Linux: SQL Server shares its VM�
 
 Use fresh containers for this scenario. Run only the appropriate Compose file on each VM; the original demo uses the same container names. These files retain the embedded lab passwords and disposable storage. With host networking, SQL Server listens on the VM network interfaces; restrict access with the host and cloud firewalls. Restrict subscriber TCP `1433` in the cloud and host firewall to the publisher VM's source address (as seen by the subscriber). Run administrative commands locally on each VM; they do not require allowing inbound publisher TCP `1433` across clouds.
 
+The publisher also maps `sql-publisher` and `SQL-PUBLISHER` to `127.0.0.1` inside its container. Replication agents use these names to connect to the local publisher/distributor. Setting `hostname` alone did not provide working resolution in the tested host-network deployment; without these mappings, all three agents failed to connect and the subscriber's `dbo.Customers` table was never created.
+
 If you already ran the bridge-network version, changing network mode recreates the containers and discards this lab’s unpersisted data. For a disposable lab, reset both VMs using step 5, pull this branch on both VMs, and repeat setup. Back up first if you need the existing data.
 
 ### 1. Start each VM's service
@@ -156,12 +158,40 @@ docker compose -f docker-compose.publisher.yaml logs -f
 
 Wait for each server to report that it is ready for client connections, then press Ctrl+C to stop following logs. Keep `SUBSCRIBER_VM_IP` exported for every publisher Compose command; export it again in a new shell. An unset or empty value causes Compose to fail with a configuration error.
 
-### 2. Verify the cross-VM connection
+#### Publisher without Compose
+
+For a fresh publisher container, use the equivalent [run-publisher.sh](run-publisher.sh) script instead of the publisher Compose startup command:
+
+```sh
+export SUBSCRIBER_VM_IP='10.20.0.2'
+bash ./run-publisher.sh
+docker logs -f sql-publisher
+```
+
+It includes host networking, both publisher loopback aliases, the remote subscriber mapping, SQL Agent, and snapshot-directory initialization. It refuses an unset/empty subscriber IP and does not remove an existing container. Manage a script-created container with `docker stop sql-publisher` and `docker start sql-publisher`; `docker rm sql-publisher` after stopping it discards its data. Do not use Compose to manage a container created by this script.
+
+### 2. Verify publisher and subscriber connections
+
+On **VM 1**, first verify the agent's local publisher/distributor connections. These checks work with either startup method:
+
+```sh
+docker exec sql-publisher bash -c '
+set -e
+for server in tcp:127.0.0.1,1433 tcp:sql-publisher,1433 tcp:SQL-PUBLISHER,1433; do
+  echo "Testing $server"
+  /opt/mssql-tools18/bin/sqlcmd \
+    -S "$server" -U sa -P "P@ssw0rd_Pub1" -C -b -l 5 \
+    -Q "SELECT @@SERVERNAME AS PublisherServerName;"
+done
+'
+```
+
+All three must return `sql-publisher`. If loopback succeeds but the hostname connections fail, follow the hostname troubleshooting steps below before running setup.
 
 On **VM 1**, connect from inside the publisher container, using the same hostname and port the replication agent will use:
 
 ```sh
-docker compose -f docker-compose.publisher.yaml exec sql-publisher \
+docker exec sql-publisher \
   /opt/mssql-tools18/bin/sqlcmd -S sql-subscriber,1433 \
   -U sa -P 'P@ssw0rd_Sub1' -C -b \
   -Q 'SELECT @@SERVERNAME AS SubscriberServerName;'
@@ -198,6 +228,43 @@ sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 05_check_subscriber.s
 ```
 
 Customer `3` is added in the next step. If the table or initial rows have not arrived yet, wait and rerun this read-only check; do not rerun the setup scripts against the initialized lab.
+
+#### Troubleshooting a missing subscriber table
+
+A successful job-start message only confirms that the agent launched. If script `03` says the snapshot job is already running, let the existing run continue instead of rerunning setup. If script `05` keeps reporting `Invalid object name 'dbo.Customers'`, inspect agent history on **VM 1**:
+
+```sh
+sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -y 0 -Q "
+SELECT TOP (15)
+    j.name AS job_name, h.step_id, h.run_status,
+    h.run_date, h.run_time, h.message
+FROM msdb.dbo.sysjobhistory AS h
+JOIN msdb.dbo.sysjobs AS j ON j.job_id = h.job_id
+WHERE j.name LIKE '%ReplDemo%'
+ORDER BY h.instance_id DESC;
+
+SELECT TOP (10) [time], error_code, error_text
+FROM distribution.dbo.MSrepl_errors
+ORDER BY [time] DESC, id DESC;
+"
+```
+
+For `could not connect to Distributor 'sql-publisher'` or publisher connection timeouts, run the three local connection checks above. If loopback succeeds but hostname connections fail, inspect resolution:
+
+```sh
+docker exec sql-publisher getent hosts sql-publisher SQL-PUBLISHER
+```
+
+For an existing host-network container missing the publisher mapping, apply this temporary repair without recreating it:
+
+```sh
+docker exec -u root sql-publisher sh -c \
+  'printf "\n127.0.0.1 sql-publisher SQL-PUBLISHER\n" >> /etc/hosts'
+```
+
+Repeat the local connection checks, let retrying agents reconnect, and rerun script `05` on VM 2. If the table remains missing, inspect the latest history again. Do not manually create the subscriber table or rerun scripts `01`–`03` against the initialized lab.
+
+The live `/etc/hosts` repair is temporary. The updated publisher Compose file and `run-publisher.sh` include the aliases for future container creation. Applying a changed Compose configuration can recreate the container and discard this lab's unpersisted data; keep the working container and back up needed data before recreation.
 
 ### 4. Validate live changes and edge cases
 

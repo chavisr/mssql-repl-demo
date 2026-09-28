@@ -19,6 +19,9 @@ services:
       "
     # SQL Server listens directly on VM 1 TCP 1433.
     network_mode: host
-    # Keep the SQL replication identity while routing to the other VM.
+    # Agents connect to the local distributor by server name, not localhost.
+    # Map both spellings emitted by SQL Server; keep the remote subscriber route.
     extra_hosts:
+      sql-publisher: "127.0.0.1"
+      SQL-PUBLISHER: "127.0.0.1"
       sql-subscriber: "${SUBSCRIBER_VM_IP:?Set SUBSCRIBER_VM_IP to the reachable subscriber VM IP address}"

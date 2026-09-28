@@ -5,6 +5,11 @@
 
   Example:
   sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 03_create_subscription.sql
+
+  For the two-VM host-network lab, use localhost,1433 instead.
+  Before running, verify the publisher container can connect to sql-publisher
+  and SQL-PUBLISHER on TCP 1433, and to the remote sql-subscriber.
+  See README.md: Verify publisher and subscriber connections.
 */
 
 USE ReplDemo;
@@ -31,4 +36,4 @@ GO
 EXEC sp_startpublication_snapshot @publication = N'ReplDemoPub';
 GO
 
-PRINT 'Push subscription created. Give the snapshot agent a minute or two before checking the Subscriber.';
+PRINT 'Push subscription created; snapshot start requested. Wait for dbo.Customers on the Subscriber. Job startup does not confirm snapshot delivery; inspect agent history if the table stays missing.';
