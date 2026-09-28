@@ -1,10 +1,4 @@
-/*
-  Run against sql-subscriber (localhost,1433), as 'sa'.
-  Run this a few seconds after 04_validate_on_publisher.sql.
-
-  Example:
-  sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -i 05_check_subscriber.sql
-*/
+/* Run on the AWS RDS SQL Server subscriber: bash ./run-sql.sh 05 */
 
 USE ReplDemo_Sub;
 GO

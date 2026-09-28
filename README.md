@@ -1,148 +1,116 @@
-# SQL Server replication across two VMs
+# Azure SQL Managed Instance → AWS RDS SQL Server
 
-A SQL Server 2022 transactional replication lab that publishes `dbo.Customers` from `ReplDemo` to `ReplDemo_Sub` through a continuous push subscription.
+A transactional replication lab that publishes `dbo.Customers` from `ReplDemo` on Azure SQL Managed Instance to `ReplDemo_Sub` on Amazon RDS for SQL Server through a continuous push subscription.
 
-This branch runs Docker containers on two Linux VMs. It models an Azure SQL Managed Instance publisher/distributor and an AWS RDS SQL Server subscriber; it does not provision either managed service. The single-machine demo is on [main](https://github.com/chavisr/mssql-repl-demo/tree/main).
+Use branch `scenario/azure-mi-to-rds`. The container lab is on [scenario/two-vm-replication](https://github.com/chavisr/mssql-repl-demo/tree/scenario/two-vm-replication). This branch configures existing managed services; it does not provision cloud resources.
 
-## Topology
+## Topology and prerequisites
 
-| VM | Container | Role | Databases | SQL port |
-| --- | --- | --- | --- | --- |
-| VM 1 | `sql-publisher` | Publisher + distributor | `ReplDemo`, `distribution` | `1433` |
-| VM 2 | `sql-subscriber` | Push subscriber | `ReplDemo_Sub` | `1433` |
+| Resource | Role |
+| --- | --- |
+| Azure SQL Managed Instance | Publisher, distributor, and all replication agent jobs |
+| Azure Files share | Snapshot working directory |
+| Amazon RDS for SQL Server | Push subscriber only |
+| Administration machine | Bash, Microsoft ODBC `sqlcmd`, and network access to both databases |
 
-Both containers use host networking. The publisher maps its own server names to `127.0.0.1` and `sql-subscriber` to the subscriber VM's reachable IP. SQL Agent and snapshot-directory initialization are configured automatically. Snapshot files remain on the publisher; no shared filesystem is required.
+Prepare these resources before running setup:
 
-## Prerequisites
+- A dedicated lab MI with no existing distributor or `ReplDemo` database. This requires **SQL Managed Instance**, not Azure SQL Database.
+- An RDS for SQL Server instance with no existing `ReplDemo_Sub` database. Check supported replication versions for the chosen MI update policy and RDS engine version.
+- An MI SQL administrator login able to configure replication, and the RDS master login for this lab. The agents use these credentials; supply the actual configured usernames, not the Docker lab's `sa` login.
+- A reachable RDS DNS endpoint and SQL port from the MI subnet, with routing, DNS, Azure NSG rules, and the RDS security group configured. Use private connectivity between the Azure VNet and AWS VPC, such as a site-to-site VPN. Access from your administration machine alone does not establish MI-to-RDS connectivity.
+- An Azure storage account with an SMB file share, its UNC path, and its storage connection string. Allow MI outbound TCP `445` to the share and access through the storage firewall. Use a share dedicated to this lab.
+- Trusted TLS certificates on the administration machine, including the applicable RDS CA certificate. The runner requests encryption and does not bypass certificate validation.
 
-- Two Linux VMs with Docker and Bash, each with TCP port `1433` available.
-- Publisher-to-subscriber connectivity on TCP `1433`, allowed through the host and cloud firewalls.
-- Host `sqlcmd` installed on both VMs.
-- Branch `scenario/two-vm-replication` checked out on both VMs.
+MI snapshot storage and agent configuration follow [Microsoft's replication setup guide](https://learn.microsoft.com/en-us/azure/azure-sql/managed-instance/replication-between-two-instances-configure-tutorial?view=azuresql). RDS subscription configuration uses the endpoint directly, as described in [AWS's transactional replication guide](https://aws.amazon.com/blogs/database/migrating-to-amazon-rds-for-sql-server-using-transactional-replication-part-2/). Keep the DNS endpoint instead of pinning an IP or requiring the RDS internal server name to match it.
 
-Run commands from this repository on the indicated VM. The supplied `sa` passwords are embedded lab credentials; `-C` trusts the server certificate. Restrict database access to the required hosts. Start with fresh containers; setup scripts are intended to run once per lab.
+## Configure the lab
 
-## Run the demo
+From this repository on your administration machine:
 
-### 1. Start each VM's container
-
-On **VM 2 (subscriber)**, run [run-subscriber.sh](run-subscriber.sh):
-
-```sh
-bash ./run-subscriber.sh
-docker logs -f sql-subscriber
+```bash
+cp cloud.env.example cloud.env
+chmod 600 cloud.env
 ```
 
-On **VM 1 (publisher)**, replace the example IP with the subscriber VM's reachable IP and run [run-publisher.sh](run-publisher.sh):
+Edit `cloud.env` with your endpoints, credentials, Azure Files share, storage connection string, and a strong distribution database master-key password. The file is ignored by Git. Use Bash quoting for all values; for an apostrophe inside a single-quoted value, close the quote, insert `\'`, and reopen it. The runner escapes SQL string literals separately.
 
-```sh
-export SUBSCRIBER_VM_IP='10.20.0.2'
-bash ./run-publisher.sh
-docker logs -f sql-publisher
+| Setting | Example or meaning |
+| --- | --- |
+| `MI_SERVER` | MI connection endpoint and port, e.g. `my-mi.zone.database.windows.net,1433` |
+| `MI_LOGIN`, `MI_PASSWORD` | MI SQL login used for administration and replication agents |
+| `RDS_SERVER` | RDS DNS endpoint and port, e.g. `my-rds.id.region.rds.amazonaws.com,1433` |
+| `RDS_LOGIN`, `RDS_PASSWORD` | RDS SQL login used to create and populate the subscriber database |
+| `SNAPSHOT_SHARE` | UNC path such as `\\storageaccount.file.core.windows.net\replshare` |
+| `STORAGE_CONNECTION_STRING` | Storage account connection string containing its account key |
+| `DISTRIBUTION_KEY_PASSWORD` | Password protecting the distribution database master key |
+
+The MI endpoint/port must be reachable from your administration machine; use the appropriate connection endpoint for your network. The RDS endpoint/port is also used by the MI's Distribution Agent.
+
+Load your configuration and verify administrative access:
+
+```bash
+source ./cloud.env
+SQLCMDPASSWORD="$MI_PASSWORD" sqlcmd -S "$MI_SERVER" -U "$MI_LOGIN" -N -b \
+  -Q "SELECT @@SERVERNAME AS ServerName, SERVERPROPERTY('EngineEdition') AS EngineEdition;"
+SQLCMDPASSWORD="$RDS_PASSWORD" sqlcmd -S "$RDS_SERVER" -U "$RDS_LOGIN" -N -b \
+  -Q 'SELECT @@SERVERNAME AS ServerName;'
 ```
 
-Wait for each server to report that it is ready for client connections, then press Ctrl+C to stop following logs. Both scripts use `docker run --rm` with host networking. Containers are automatically removed when they exit. The publisher requires a nonempty `SUBSCRIBER_VM_IP` at container creation. The scripts leave existing containers untouched. Stopping these containers discards their unpersisted lab data.
+Expect engine edition `8` on MI. RDS may return an internal server name different from its DNS endpoint; continue using the endpoint. Passwords are passed to `sqlcmd` through its environment, not command-line arguments. Do not run with shell tracing enabled.
 
-### 2. Verify publisher and subscriber connections
+## Run setup
 
-On **VM 1**, verify the publisher and remote subscriber connections:
+The runner chooses the correct service for each numbered script. Run setup once against the fresh lab:
 
-```sh
-docker exec sql-publisher \
-  /opt/mssql-tools18/bin/sqlcmd -S sql-publisher,1433 \
-  -U sa -P 'P@ssw0rd_Pub1' -C -b \
-  -Q 'SELECT @@SERVERNAME AS PublisherServerName;'
-
-docker exec sql-publisher \
-  /opt/mssql-tools18/bin/sqlcmd -S sql-subscriber,1433 \
-  -U sa -P 'P@ssw0rd_Sub1' -C -b \
-  -Q 'SELECT @@SERVERNAME AS SubscriberServerName;'
+```bash
+bash ./run-sql.sh 01
+bash ./run-sql.sh 02
+bash ./run-sql.sh 03
 ```
 
-Expect `sql-publisher` and `sql-subscriber`, respectively.
-
-### 3. Configure replication in order
-
-Run the setup commands once, in the order below. Both VMs use port `1433`.
-
-First, on **VM 1**:
-
-```sh
-sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -b -i 01_setup_publisher_distributor.sql
-```
-
-Then, on **VM 2**:
-
-```sh
-sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 02_setup_subscriber_db.sql
-```
-
-Finally, on **VM 1**:
-
-```sh
-sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -b -i 03_create_subscription.sql
-```
-
-Allow a minute or two for initialization. On **VM 2**, verify customers `1` and `2` arrive:
-
-```sh
-sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 05_check_subscriber.sql
-```
-
-Expect Alice and Bao (customers `1` and `2`). Customer `3` is added in the next step. Wait for these initial rows before continuing.
-
-### 4. Validate live changes and edge cases
-
-On **VM 1**, run the live-change script once:
-
-```sh
-sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 04_validate_on_publisher.sql
-```
-
-Run script `04` without `-b` so its existing tracer-token check does not prevent the later insert of Chloe. After a few seconds, on **VM 2**:
-
-```sh
-sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 05_check_subscriber.sql
-```
-
-Expect customers `1`, `2`, and `3`. Next, on **VM 1**:
-
-```sh
-sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 06_test_edge_cases_on_publisher.sql
-```
-
-The truncation error is expected; leave `-b` off so the remaining batches run. After a few seconds, on **VM 2**:
-
-```sh
-sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 07_check_subscriber_after_tests.sql
-```
-
-Expect the customer rows to remain, Alice's replicated `Phone` to be `555-0100`, and no subscriber `Orders` table.
-
-### 5. Stop and reset
-
-On **VM 1**:
-
-```sh
-docker stop sql-publisher
-```
-
-On **VM 2**:
-
-```sh
-docker stop sql-subscriber
-```
-
-With `--rm`, stopping a container automatically removes it. There are no persistent volumes, so its databases, replication configuration, and publisher snapshots are discarded. To run the lab again, repeat the startup and setup steps on both VMs.
-
-## Script reference
-
-| Script | Run on | Purpose |
+| Step | Service | Action |
 | --- | --- | --- |
-| [01_setup_publisher_distributor.sql](01_setup_publisher_distributor.sql) | Publisher | Configure distribution, seed data, and publish `Customers`. |
-| [02_setup_subscriber_db.sql](02_setup_subscriber_db.sql) | Subscriber | Create `ReplDemo_Sub`. |
-| [03_create_subscription.sql](03_create_subscription.sql) | Publisher | Create the push subscription and start the snapshot. |
-| [04_validate_on_publisher.sql](04_validate_on_publisher.sql) | Publisher | Inspect the subscription, attempt a latency check, and insert customer `3`. |
-| [05_check_subscriber.sql](05_check_subscriber.sql) | Subscriber | Read replicated customers. |
-| [06_test_edge_cases_on_publisher.sql](06_test_edge_cases_on_publisher.sql) | Publisher | Test truncation, schema replication, and an unpublished table. |
-| [07_check_subscriber_after_tests.sql](07_check_subscriber_after_tests.sql) | Subscriber | Inspect edge-case results. |
+| `01` | MI | Configure distribution and Azure Files, seed Alice and Bao, publish `Customers`, and configure Log Reader and Snapshot agents |
+| `02` | RDS | Create the empty `ReplDemo_Sub` database |
+| `03` | MI | Create the continuous push subscription using the RDS endpoint and request the initial snapshot |
+
+The scripts contain SQLCMD variables; use the runner after loading `cloud.env`. Setup is not idempotent. If the snapshot is already running when step `03` requests it, allow that run to finish rather than rerunning setup.
+
+Allow a minute or two for initialization, then check the subscriber:
+
+```bash
+bash ./run-sql.sh 05
+```
+
+Expect Alice and Bao, IDs `1` and `2`. Wait for these rows before continuing; starting an agent job does not confirm snapshot delivery.
+
+## Test replication
+
+Insert Chloe and record tracer-token latency on MI, then check RDS:
+
+```bash
+bash ./run-sql.sh 04
+bash ./run-sql.sh 05
+```
+
+Step `04` waits 15 seconds before reading its tracer token; incomplete latency values mean the token has not finished travelling. Expect customers `1`, `2`, and `3` on RDS after delivery. Run the publisher mutation once; repeat only the subscriber query while waiting.
+
+Run the edge-case checks:
+
+```bash
+bash ./run-sql.sh 06
+bash ./run-sql.sh 07
+```
+
+Step `06` deliberately attempts a prohibited `TRUNCATE`, so the runner lets subsequent batches continue. Inspect its output for the expected rejection and repeat step `07` after delivery if needed.
+
+| Test | Expected result |
+| --- | --- |
+| Truncate published `Customers` | Rejected; rows remain |
+| Add and update `Phone` | Column arrives on RDS; Alice's value is `555-0100` |
+| Create unpublished `Orders` | Table does not appear on RDS |
+
+## Lab lifecycle
+
+These managed databases and agent jobs persist after your terminal closes. There is no container stop/reset operation. Reuse read-only checks `05` and `07`; run setup and mutation scripts only once per fresh lab. Cleanup is manual: remove the lab subscription/publication and its replication configuration before removing lab databases. Remove Azure Files snapshots when no longer needed, and delete dedicated cloud resources when finished to stop their charges. Do not drop an existing shared distributor.

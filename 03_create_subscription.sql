@@ -1,33 +1,28 @@
-/*
-  Run against sql-publisher (localhost,1433), as 'sa'.
-  Creates a PUSH subscription targeting sql-subscriber — the only subscription
-  type real RDS SQL Server supports, which is why we only ever use it here too.
-
-  Example:
-  sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 03_create_subscription.sql
-
-  Before running, verify the publisher container can connect to sql-publisher
-  and SQL-PUBLISHER on TCP 1433, and to the remote sql-subscriber.
-  See README.md: Verify publisher and subscriber connections.
-*/
+/* Run on the Azure SQL Managed Instance publisher/distributor: bash ./run-sql.sh 03 */
 
 USE ReplDemo;
 GO
 
 EXEC sp_addsubscription
     @publication      = N'ReplDemoPub',
-    @subscriber       = N'sql-subscriber',
+    @subscriber       = N'$(RDS_SERVER_SQL)',
     @destination_db   = N'ReplDemo_Sub',
-    @subscription_type = N'push';
+    @subscription_type = N'push',
+    @sync_type = N'automatic',
+    @article = N'all',
+    @update_mode = N'read only',
+    @subscriber_type = 0;
 GO
 
 EXEC sp_addpushsubscription_agent
     @publication            = N'ReplDemoPub',
-    @subscriber             = N'sql-subscriber',
+    @subscriber             = N'$(RDS_SERVER_SQL)',
     @subscriber_db          = N'ReplDemo_Sub',
-    @subscriber_security_mode = 0,           -- SQL Server auth — no Windows auth on Linux containers
-    @subscriber_login       = N'sa',
-    @subscriber_password    = N'P@ssw0rd_Sub1',
+    @subscriber_security_mode = 0,           -- SQL authentication to RDS
+    @subscriber_login       = N'$(RDS_LOGIN_SQL)',
+    @subscriber_password    = N'$(RDS_PASSWORD_SQL)',
+    @job_login              = N'$(MI_LOGIN_SQL)',
+    @job_password           = N'$(MI_PASSWORD_SQL)',
     @frequency_type         = 64;            -- continuous, not a batch schedule
 GO
 

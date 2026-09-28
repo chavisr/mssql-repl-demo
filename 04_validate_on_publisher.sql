@@ -1,12 +1,4 @@
-/*
-  Run against sql-publisher (localhost,1433), as 'sa'.
-  Checks subscription status, measures latency with a tracer token, and inserts
-  a live row. Run 05_check_subscriber.sql against sql-subscriber a few seconds
-  after this one.
-
-  Example:
-  sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 04_validate_on_publisher.sql
-*/
+/* Run on the Azure SQL Managed Instance publisher/distributor: bash ./run-sql.sh 04 */
 
 USE ReplDemo;
 GO
@@ -18,10 +10,12 @@ GO
 -- Post a tracer token to measure real Publisher -> Distributor -> Subscriber latency
 DECLARE @tracer_id INT;
 EXEC sp_posttracertoken @publication = N'ReplDemoPub', @tracer_token_id = @tracer_id OUTPUT;
-GO
 
--- Wait ~10-30 seconds, then check the latency it measured
-EXEC sp_helptracertokenhistory @publication = N'ReplDemoPub';
+-- Keep the token in the same batch and allow asynchronous delivery.
+WAITFOR DELAY '00:00:15';
+EXEC sp_helptracertokenhistory
+    @publication = N'ReplDemoPub',
+    @tracer_id = @tracer_id;
 GO
 
 -- Make a live change and watch it show up on the Subscriber

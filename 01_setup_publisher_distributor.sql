@@ -1,51 +1,39 @@
-/*
-  Run against sql-publisher (localhost,1433), as 'sa'.
-  Mimics: Azure SQL MI configured as Distributor + Publisher.
-
-  The run-publisher.sh script creates /var/opt/mssql/ReplData automatically on
-  container startup, so no manual mkdir/chown step is needed before this script.
-
-  Example:
-  sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 01_setup_publisher_distributor.sql
-*/
+/* Run on the Azure SQL Managed Instance publisher/distributor: bash ./run-sql.sh 01 */
 
 USE master;
 GO
 
--- 1) Install a local distributor.
---    @security_mode = 0 (SQL Server Authentication) throughout this whole exercise,
---    because Linux containers have no Windows/AD auth available without extra setup.
-EXEC sp_adddistributor
-    @distributor = @@SERVERNAME,
-    @password    = N'DistPassword1!';
+-- Fresh dedicated lab MI only: do not overwrite an existing distributor.
+IF CONVERT(int, SERVERPROPERTY('EngineEdition')) <> 8
+    THROW 50001, 'This setup requires Azure SQL Managed Instance.', 1;
+IF DB_ID(N'distribution') IS NOT NULL OR DB_ID(N'ReplDemo') IS NOT NULL
+   OR EXISTS (SELECT 1 FROM sys.servers WHERE is_distributor = 1)
+    THROW 50002, 'Use a fresh lab MI without distribution or ReplDemo already configured.', 1;
 GO
 
-EXEC sp_adddistributiondb
-    @database      = N'distribution',
-    @security_mode = 0,
-    @login         = N'sa',
-    @password      = N'P@ssw0rd_Pub1';
+-- 1) Configure the MI as its own distributor.
+EXEC sp_adddistributor @distributor = @@SERVERNAME;
+EXEC sp_adddistributiondb @database = N'distribution';
 GO
 
--- Replication encrypts agent secrets (e.g. the subscriber password used in step 3)
--- using this key. Without it you get a warning now and likely a hard failure later.
 USE distribution;
 GO
-
-CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'DistrMasterKey1!';
+IF NOT EXISTS (SELECT 1 FROM sys.symmetric_keys WHERE name = N'##MS_DatabaseMasterKey##')
+    CREATE MASTER KEY ENCRYPTION BY PASSWORD = N'$(DISTRIBUTION_KEY_PASSWORD_SQL)';
 GO
 
 USE master;
 GO
 
--- 2) Register this server as a publisher that uses the distributor above
+-- 2) Store snapshots in Azure Files, accessible from the MI on TCP 445.
 EXEC sp_adddistpublisher
-    @publisher         = @@SERVERNAME,
-    @distribution_db   = N'distribution',
-    @working_directory = N'/var/opt/mssql/ReplData',
-    @security_mode     = 0,
-    @login             = N'sa',
-    @password          = N'P@ssw0rd_Pub1';
+    @publisher = @@SERVERNAME,
+    @distribution_db = N'distribution',
+    @security_mode = 0,
+    @login = N'$(MI_LOGIN_SQL)',
+    @password = N'$(MI_PASSWORD_SQL)',
+    @working_directory = N'$(SNAPSHOT_SHARE_SQL)',
+    @storage_connection_string = N'$(STORAGE_CONNECTION_STRING_SQL)';
 GO
 
 -- 3) Sample database + table to replicate (needs a primary key to be eligible)
@@ -84,8 +72,23 @@ EXEC sp_addpublication
     @independent_agent  = N'true';
 GO
 
+-- Use explicit SQL credentials for MI replication agents.
+EXEC sp_changelogreader_agent
+    @publisher_security_mode = 0,
+    @publisher_login = N'$(MI_LOGIN_SQL)',
+    @publisher_password = N'$(MI_PASSWORD_SQL)',
+    @job_login = N'$(MI_LOGIN_SQL)',
+    @job_password = N'$(MI_PASSWORD_SQL)';
+GO
+
 EXEC sp_addpublication_snapshot
-    @publication = N'ReplDemoPub';
+    @publication = N'ReplDemoPub',
+    @frequency_type = 1,
+    @publisher_security_mode = 0,
+    @publisher_login = N'$(MI_LOGIN_SQL)',
+    @publisher_password = N'$(MI_PASSWORD_SQL)',
+    @job_login = N'$(MI_LOGIN_SQL)',
+    @job_password = N'$(MI_PASSWORD_SQL)';
 GO
 
 -- 6) Add the table as an article

@@ -1,10 +1,4 @@
-/*
-  Run against sql-subscriber (localhost,1433), as 'sa', a few seconds after
-  06_test_edge_cases_on_publisher.sql.
-
-  Example:
-  sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -i 07_check_subscriber_after_tests.sql
-*/
+/* Run on the AWS RDS SQL Server subscriber: bash ./run-sql.sh 07 */
 
 USE ReplDemo_Sub;
 GO
