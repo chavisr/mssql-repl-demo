@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Do not remove an existing container: this demo has no persistent data volume.
-docker run -d \
+docker run --rm -d \
   --name sql-subscriber \
   --hostname sql-subscriber \
   --network host \

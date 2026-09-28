@@ -5,7 +5,7 @@ set -euo pipefail
 : "${SUBSCRIBER_VM_IP:?Set SUBSCRIBER_VM_IP to the reachable subscriber VM IP address}"
 
 # Do not remove an existing container: this demo has no persistent data volume.
-docker run -d \
+docker run --rm -d \
   --name sql-publisher \
   --hostname sql-publisher \
   --network host \

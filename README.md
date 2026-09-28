@@ -41,7 +41,7 @@ bash ./run-publisher.sh
 docker logs -f sql-publisher
 ```
 
-Wait for each server to report that it is ready for client connections, then press Ctrl+C to stop following logs. Both scripts use `docker run` with host networking. The publisher requires a nonempty `SUBSCRIBER_VM_IP` at container creation. The scripts leave existing containers untouched; use `docker start` to resume a stopped container.
+Wait for each server to report that it is ready for client connections, then press Ctrl+C to stop following logs. Both scripts use `docker run --rm` with host networking. Containers are automatically removed when they exit. The publisher requires a nonempty `SUBSCRIBER_VM_IP` at container creation. The scripts leave existing containers untouched. Stopping these containers discards their unpersisted lab data.
 
 ### 2. Verify publisher and subscriber connections
 
@@ -119,37 +119,21 @@ sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 07_check_subscriber_a
 
 Expect the customer rows to remain, Alice's replicated `Phone` to be `555-0100`, and no subscriber `Orders` table.
 
-### 5. Stop, resume, or reset
+### 5. Stop and reset
 
 On **VM 1**:
 
 ```sh
 docker stop sql-publisher
-docker start sql-publisher
 ```
 
 On **VM 2**:
 
 ```sh
 docker stop sql-subscriber
-docker start sql-subscriber
 ```
 
-To reset the entire lab, remove both containers on their respective VMs:
-
-```sh
-# VM 1 (publisher)
-docker stop sql-publisher
-docker rm sql-publisher
-```
-
-```sh
-# VM 2 (subscriber)
-docker stop sql-subscriber
-docker rm sql-subscriber
-```
-
-There are no persistent volumes: removing the containers discards databases, replication configuration, and publisher snapshots. To start fresh, repeat the startup and setup steps on both VMs.
+With `--rm`, stopping a container automatically removes it. There are no persistent volumes, so its databases, replication configuration, and publisher snapshots are discarded. To run the lab again, repeat the startup and setup steps on both VMs.
 
 ## Script reference
 
