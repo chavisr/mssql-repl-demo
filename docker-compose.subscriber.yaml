@@ -1,0 +1,13 @@
+# VM 2: push subscriber only. Run this file independently on the subscriber VM.
+services:
+  sql-subscriber:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sql-subscriber
+    hostname: sql-subscriber
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "P@ssw0rd_Sub1"
+      MSSQL_PID: "Developer"
+      MSSQL_AGENT_ENABLED: "true"
+    ports:
+      - "1433:1433"

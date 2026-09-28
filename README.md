@@ -4,6 +4,8 @@ A local SQL Server 2022 transactional replication lab using Docker Compose. It p
 
 The project models an Azure SQL Managed Instance publisher/distributor and an AWS RDS SQL Server subscriber using local SQL Server Developer containers. It does not provision or validate either cloud service.
 
+For containers on separate cloud VMs, follow [Two-VM deployment](#two-vm-deployment). The commands in the initial sections below run the original single-host demo.
+
 ## Topology
 
 | Container | Role | Host connection | Database |
@@ -119,3 +121,134 @@ docker compose down
 ```
 
 The Compose file defines no persistent data volumes. Removing the containers discards the lab databases and replication configuration. To start fresh, run `docker compose up -d` and repeat the setup sequence.
+
+## Two-VM deployment
+
+This scenario runs the same push replication lab across two reachable Linux VMs. Check out branch `scenario/two-vm-replication` on both VMs. Install Docker with Compose and host `sqlcmd` on each VM, and run the commands from this repository.
+
+| VM | Compose file | Role | Host SQL port |
+| --- | --- | --- | --- |
+| VM 1 | `docker-compose.publisher.yaml` | Publisher + distributor | `14330` |
+| VM 2 | `docker-compose.subscriber.yaml` | Push subscriber | `1433` |
+
+Each Compose file runs independently with its own local Docker network. The publisher resolves `sql-subscriber` to the subscriber VM's reachable IP using `extra_hosts`; the existing SQL scripts retain the subscriber identity `sql-subscriber`. Snapshot files stay on the publisher, where the push agents run. No shared filesystem or cross-host Docker network is needed.
+
+Use fresh containers for this scenario. Run only the appropriate Compose file on each VM; the original demo uses the same container names. These files retain the embedded lab passwords and disposable storage. Restrict subscriber TCP `1433` in the cloud and host firewall to the publisher VM's source address (as seen by the subscriber). Run administrative commands locally on each VM; they do not require opening publisher port `14330` across clouds.
+
+### 1. Start each VM's service
+
+On **VM 2 (subscriber)**:
+
+```sh
+docker compose -f docker-compose.subscriber.yaml up -d
+docker compose -f docker-compose.subscriber.yaml logs -f
+```
+
+On **VM 1 (publisher)**, replace the example IP with the subscriber VM address reachable from the publisher container:
+
+```sh
+export SUBSCRIBER_VM_IP='10.20.0.2'
+docker compose -f docker-compose.publisher.yaml up -d
+docker compose -f docker-compose.publisher.yaml logs -f
+```
+
+Wait for each server to report that it is ready for client connections, then press Ctrl+C to stop following logs. Keep `SUBSCRIBER_VM_IP` exported for every publisher Compose command; export it again in a new shell. An unset or empty value causes Compose to fail with a configuration error.
+
+### 2. Verify the cross-VM connection
+
+On **VM 1**, connect from inside the publisher container, using the same hostname and port the replication agent will use:
+
+```sh
+docker compose -f docker-compose.publisher.yaml exec sql-publisher \
+  /opt/mssql-tools18/bin/sqlcmd -S sql-subscriber,1433 \
+  -U sa -P 'P@ssw0rd_Sub1' -C -b \
+  -Q 'SELECT @@SERVERNAME AS SubscriberServerName;'
+```
+
+Expect `sql-subscriber`. If the connection fails, check the configured VM IP, subscriber readiness, published port, and firewall rules before configuring replication. Host-to-host reachability alone does not verify the container's connection. If the returned server name differs, correct the subscriber deployment before proceeding.
+
+### 3. Configure replication in order
+
+First, on **VM 1**:
+
+```sh
+sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -b -i 01_setup_publisher_distributor.sql
+```
+
+Then, on **VM 2** (use port `1433`, overriding the local-demo port shown in SQL file comments):
+
+```sh
+sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 02_setup_subscriber_db.sql
+```
+
+Finally, on **VM 1**:
+
+```sh
+sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -b -i 03_create_subscription.sql
+```
+
+Allow a minute or two for initialization. On **VM 2**, verify customers `1` and `2` arrive:
+
+```sh
+sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 05_check_subscriber.sql
+```
+
+Customer `3` is added in the next step. If the table or initial rows have not arrived yet, wait and rerun this read-only check; do not rerun the setup scripts against the initialized lab.
+
+### 4. Validate live changes and edge cases
+
+On **VM 1**, run the live-change script once:
+
+```sh
+sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 04_validate_on_publisher.sql
+```
+
+The existing tracer-token limitation described in [Check live replication](#3-check-live-replication) still applies; leave `-b` off this command so later batches can insert Chloe. After a few seconds, on **VM 2**:
+
+```sh
+sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 05_check_subscriber.sql
+```
+
+Expect customers `1`, `2`, and `3`. Next, on **VM 1**:
+
+```sh
+sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 06_test_edge_cases_on_publisher.sql
+```
+
+The truncation error is expected; leave `-b` off so the remaining batches run. After a few seconds, on **VM 2**:
+
+```sh
+sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Sub1' -C -b -i 07_check_subscriber_after_tests.sql
+```
+
+Expect the customer rows to remain, Alice's replicated `Phone` to be `555-0100`, and no subscriber `Orders` table.
+
+### 5. Stop, resume, or reset
+
+On **VM 1**:
+
+```sh
+docker compose -f docker-compose.publisher.yaml stop
+docker compose -f docker-compose.publisher.yaml start
+```
+
+On **VM 2**:
+
+```sh
+docker compose -f docker-compose.subscriber.yaml stop
+docker compose -f docker-compose.subscriber.yaml start
+```
+
+To reset the entire lab, remove both containers on their respective VMs:
+
+```sh
+# VM 1 (publisher)
+docker compose -f docker-compose.publisher.yaml down
+```
+
+```sh
+# VM 2 (subscriber)
+docker compose -f docker-compose.subscriber.yaml down
+```
+
+There are no persistent volumes: `down` discards databases, replication configuration, and publisher snapshots. To start fresh, repeat the startup and setup steps on both VMs.

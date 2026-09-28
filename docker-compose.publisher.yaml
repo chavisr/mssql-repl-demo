@@ -1,0 +1,24 @@
+# VM 1: publisher + distributor. Run this file independently on the publisher VM.
+services:
+  sql-publisher:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sql-publisher
+    hostname: sql-publisher
+    user: root
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "P@ssw0rd_Pub1"
+      MSSQL_PID: "Developer"
+      MSSQL_AGENT_ENABLED: "true"
+    # Prepare local snapshot storage, then run SQL Server as mssql.
+    command: >
+      bash -c "
+      mkdir -p /var/opt/mssql/ReplData &&
+      chown -R mssql:mssql /var/opt/mssql/ReplData &&
+      exec su mssql -c '/opt/mssql/bin/sqlservr'
+      "
+    ports:
+      - "14330:1433"
+    # Keep the SQL replication identity while routing to the other VM.
+    extra_hosts:
+      sql-subscriber: "${SUBSCRIBER_VM_IP:?Set SUBSCRIBER_VM_IP to the reachable subscriber VM IP address}"
