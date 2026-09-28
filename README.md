@@ -15,7 +15,7 @@ Both containers use host networking. The publisher maps its own server names to 
 
 ## Prerequisites
 
-- Two Linux VMs with Docker and Docker Compose, each with TCP port `1433` available.
+- Two Linux VMs with Docker and Bash, each with TCP port `1433` available.
 - Publisher-to-subscriber connectivity on TCP `1433`, allowed through the host and cloud firewalls.
 - Host `sqlcmd` installed on both VMs.
 - Branch `scenario/two-vm-replication` checked out on both VMs.
@@ -24,28 +24,16 @@ Run commands from this repository on the indicated VM. The supplied `sa` passwor
 
 ## Run the demo
 
-### 1. Start each VM's service
+### 1. Start each VM's container
 
-On **VM 2 (subscriber)**:
-
-```sh
-docker compose -f docker-compose.subscriber.yaml up -d
-docker compose -f docker-compose.subscriber.yaml logs -f
-```
-
-On **VM 1 (publisher)**, replace the example IP with the subscriber VM address reachable from the publisher container:
+On **VM 2 (subscriber)**, run [run-subscriber.sh](run-subscriber.sh):
 
 ```sh
-export SUBSCRIBER_VM_IP='10.20.0.2'
-docker compose -f docker-compose.publisher.yaml up -d
-docker compose -f docker-compose.publisher.yaml logs -f
+bash ./run-subscriber.sh
+docker logs -f sql-subscriber
 ```
 
-Wait for each server to report that it is ready for client connections, then press Ctrl+C to stop following logs. Keep `SUBSCRIBER_VM_IP` exported for every publisher Compose command; export it again in a new shell. An unset or empty value causes Compose to fail with a configuration error.
-
-#### Publisher without Compose
-
-For a fresh publisher container, use the equivalent [run-publisher.sh](run-publisher.sh) script instead of the publisher Compose startup command:
+On **VM 1 (publisher)**, replace the example IP with the subscriber VM's reachable IP and run [run-publisher.sh](run-publisher.sh):
 
 ```sh
 export SUBSCRIBER_VM_IP='10.20.0.2'
@@ -53,7 +41,7 @@ bash ./run-publisher.sh
 docker logs -f sql-publisher
 ```
 
-The script uses the same settings as the publisher Compose file. Manage this container with `docker stop sql-publisher` and `docker start sql-publisher`. To reset it, stop it and run `docker rm sql-publisher`; removing it discards its data.
+Wait for each server to report that it is ready for client connections, then press Ctrl+C to stop following logs. Both scripts use `docker run` with host networking. The publisher requires a nonempty `SUBSCRIBER_VM_IP` at container creation. The scripts leave existing containers untouched; use `docker start` to resume a stopped container.
 
 ### 2. Verify publisher and subscriber connections
 
@@ -136,30 +124,32 @@ Expect the customer rows to remain, Alice's replicated `Phone` to be `555-0100`,
 On **VM 1**:
 
 ```sh
-docker compose -f docker-compose.publisher.yaml stop
-docker compose -f docker-compose.publisher.yaml start
+docker stop sql-publisher
+docker start sql-publisher
 ```
 
 On **VM 2**:
 
 ```sh
-docker compose -f docker-compose.subscriber.yaml stop
-docker compose -f docker-compose.subscriber.yaml start
+docker stop sql-subscriber
+docker start sql-subscriber
 ```
 
 To reset the entire lab, remove both containers on their respective VMs:
 
 ```sh
 # VM 1 (publisher)
-docker compose -f docker-compose.publisher.yaml down
+docker stop sql-publisher
+docker rm sql-publisher
 ```
 
 ```sh
 # VM 2 (subscriber)
-docker compose -f docker-compose.subscriber.yaml down
+docker stop sql-subscriber
+docker rm sql-subscriber
 ```
 
-There are no persistent volumes: `down` discards databases, replication configuration, and publisher snapshots. To start fresh, repeat the startup and setup steps on both VMs.
+There are no persistent volumes: removing the containers discards databases, replication configuration, and publisher snapshots. To start fresh, repeat the startup and setup steps on both VMs.
 
 ## Script reference
 

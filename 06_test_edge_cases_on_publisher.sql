@@ -1,12 +1,12 @@
 /*
-  Run against sql-publisher (localhost,14330), as 'sa'.
+  Run against sql-publisher (localhost,1433), as 'sa'.
   Tests three things that don't behave like a plain INSERT/UPDATE/DELETE:
   TRUNCATE, a schema change (DDL), and a brand-new unpublished table.
   Run 07_check_subscriber_after_tests.sql against sql-subscriber a few
   seconds afterward to see what actually made it across.
 
   Example:
-  sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 06_test_edge_cases_on_publisher.sql
+  sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 06_test_edge_cases_on_publisher.sql
 */
 
 USE ReplDemo;

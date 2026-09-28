@@ -1,12 +1,11 @@
 /*
-  Run against sql-publisher (localhost,14330), as 'sa'.
+  Run against sql-publisher (localhost,1433), as 'sa'.
   Creates a PUSH subscription targeting sql-subscriber — the only subscription
   type real RDS SQL Server supports, which is why we only ever use it here too.
 
   Example:
-  sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 03_create_subscription.sql
+  sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 03_create_subscription.sql
 
-  For the two-VM host-network lab, use localhost,1433 instead.
   Before running, verify the publisher container can connect to sql-publisher
   and SQL-PUBLISHER on TCP 1433, and to the remote sql-subscriber.
   See README.md: Verify publisher and subscriber connections.

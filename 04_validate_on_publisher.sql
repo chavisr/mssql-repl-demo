@@ -1,11 +1,11 @@
 /*
-  Run against sql-publisher (localhost,14330), as 'sa'.
+  Run against sql-publisher (localhost,1433), as 'sa'.
   Checks subscription status, measures latency with a tracer token, and inserts
   a live row. Run 05_check_subscriber.sql against sql-subscriber a few seconds
   after this one.
 
   Example:
-  sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 04_validate_on_publisher.sql
+  sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 04_validate_on_publisher.sql
 */
 
 USE ReplDemo;

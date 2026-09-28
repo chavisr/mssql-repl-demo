@@ -1,12 +1,12 @@
 /*
-  Run against sql-publisher (localhost,14330), as 'sa'.
+  Run against sql-publisher (localhost,1433), as 'sa'.
   Mimics: Azure SQL MI configured as Distributor + Publisher.
 
-  The docker-compose.yml now creates /var/opt/mssql/ReplData automatically on
+  The run-publisher.sh script creates /var/opt/mssql/ReplData automatically on
   container startup, so no manual mkdir/chown step is needed before this script.
 
   Example:
-  sqlcmd -S localhost,14330 -U sa -P 'P@ssw0rd_Pub1' -C -i 01_setup_publisher_distributor.sql
+  sqlcmd -S localhost,1433 -U sa -P 'P@ssw0rd_Pub1' -C -i 01_setup_publisher_distributor.sql
 */
 
 USE master;

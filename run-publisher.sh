@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Alternative to docker-compose.publisher.yaml for a fresh two-VM lab.
+# VM 1: start the publisher and distributor for a fresh two-VM lab.
 set -euo pipefail
 
 : "${SUBSCRIBER_VM_IP:?Set SUBSCRIBER_VM_IP to the reachable subscriber VM IP address}"
